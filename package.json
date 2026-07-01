@@ -1,0 +1,13 @@
+{
+  "name": "soc-wallboard-backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Build-time data backend for the SOC wallboards. Fetches all sources server-side and writes data/*.json for GitHub Pages.",
+  "scripts": {
+    "build": "node scripts/build-data.mjs"
+  },
+  "dependencies": {
+    "fast-xml-parser": "^4.5.0"
+  }
+}
