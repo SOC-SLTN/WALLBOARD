@@ -1,0 +1,35 @@
+{
+  "_comment": "Central source list for both wallboards. Edit this, commit, and the GitHub Action rebuilds data/*.json on its next run. To add a news source, add an object to news.feeds. To add a whole new data type you'd extend scripts/build-data.mjs.",
+
+  "news": {
+    "max": 24,
+    "feeds": [
+      { "name": "The Hacker News",  "url": "https://feeds.feedburner.com/TheHackersNews" },
+      { "name": "BleepingComputer", "url": "https://www.bleepingcomputer.com/feed/" },
+      { "name": "Krebs on Security", "url": "https://krebsonsecurity.com/feed/" },
+      { "name": "SANS ISC",          "url": "https://isc.sans.edu/rssfeed.xml" },
+      { "name": "CISA Advisories",   "url": "https://www.cisa.gov/cybersecurity-advisories/all.xml" }
+    ]
+  },
+
+  "vulns": {
+    "max": 30,
+    "kev": {
+      "enabled": true,
+      "url": "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
+      "recentDays": 21
+    },
+    "nvd": {
+      "enabled": true,
+      "severity": "CRITICAL",
+      "lookbackDays": 3,
+      "apiKey": ""
+    }
+  },
+
+  "ransomware": {
+    "enabled": true,
+    "url": "https://api.ransomware.live/v2/recentvictims",
+    "max": 40
+  }
+}
