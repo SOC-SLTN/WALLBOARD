@@ -3,13 +3,14 @@
 
   "news": {
     "max": 24,
-    "feeds": [
-      { "name": "The Hacker News",  "url": "https://feeds.feedburner.com/TheHackersNews" },
-      { "name": "BleepingComputer", "url": "https://www.bleepingcomputer.com/feed/" },
-      { "name": "Krebs on Security", "url": "https://krebsonsecurity.com/feed/" },
-      { "name": "SANS ISC",          "url": "https://isc.sans.edu/rssfeed.xml" },
-      { "name": "CISA Advisories",   "url": "https://www.cisa.gov/cybersecurity-advisories/all.xml" }
-      { "name": "NCSC-NL Advisories", "url": "https://advisories.ncsc.nl/rss/advisories" }
+    "feeds": [],
+    "csaf": [
+      {
+        "name": "NCSC-NL Advisories",
+        "changes": "https://advisories.ncsc.nl/csaf/v2/changes.csv",
+        "base": "https://advisories.ncsc.nl/csaf/v2/",
+        "max": 20
+      }
     ]
   },
 
