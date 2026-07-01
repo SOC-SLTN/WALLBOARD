@@ -9,6 +9,7 @@
       { "name": "Krebs on Security", "url": "https://krebsonsecurity.com/feed/" },
       { "name": "SANS ISC",          "url": "https://isc.sans.edu/rssfeed.xml" },
       { "name": "CISA Advisories",   "url": "https://www.cisa.gov/cybersecurity-advisories/all.xml" }
+      { "name": "NCSC-NL Advisories", "url": "https://advisories.ncsc.nl/rss/advisories" }
     ]
   },
 
