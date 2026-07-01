@@ -1,0 +1,739 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=1920, initial-scale=1" />
+<title>SOC Wallboard</title>
+
+<!--
+  ============================================================================
+  SOC WALLBOARD  ·  single-file, self-refreshing display for Yodeck
+  ============================================================================
+
+  HOW TO USE IN YODECK
+  --------------------
+  Option A (recommended): host this file somewhere your player can reach
+    (an internal web server, S3 static site, GitHub Pages, etc.), then in
+    Yodeck add a "Web Page" content item pointing at that URL. Set the layout
+    to fullscreen and disable Yodeck's own auto-refresh (this page refreshes
+    itself). Recommended resolution: 1920x1080.
+  Option B: upload this .html directly as a Web Page asset in Yodeck.
+
+  The board auto-fits any screen (720p / 1080p / 4K) by scaling a fixed
+  1920x1080 stage, so it looks identical on every wall.
+
+  CONFIGURE EVERYTHING IN THE  CONFIG  BLOCK NEAR THE BOTTOM OF THIS FILE.
+  You can change the title, the news sources, the CVE settings, refresh
+  timing, and the data proxy without touching anything else.
+
+  A NOTE ON LIVE DATA (read this)
+  -------------------------------
+  Browsers block a page from directly fetching most RSS feeds and some
+  government APIs (CORS). To pull live data, this page routes requests
+  through a small proxy. It defaults to a public one so it works out of the
+  box, but for a security operations wall you should point CONFIG.proxy at
+  your OWN proxy so your board never depends on a third party. A 10-line
+  self-hosted proxy is enough; see the note by CONFIG.proxy below.
+
+  Until live feeds succeed, the board shows clearly-labelled seed data and a
+  DEMO badge, so it never renders blank or broken on the wall.
+  ============================================================================
+-->
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+  :root{
+    --ink:#0A0E1A;
+    --panel:#0F1626;
+    --panel-2:#131C2E;
+    --raise:#18213460;
+    --line:#212B44;
+    --line-soft:#1a2237;
+    --text:#E9EEF9;
+    --muted:#8493AE;
+    --faint:#59668A;
+
+    --live:#28E0C6;
+    --crit:#FB3B4E;
+    --high:#FF7A2F;
+    --med:#F5C13B;
+    --low:#4C9BFF;
+    --none:#7E8BA6;
+
+    --font-display:'Chakra Petch', system-ui, sans-serif;
+    --font-body:'IBM Plex Sans', system-ui, sans-serif;
+    --font-mono:'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  }
+
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  html,body{ height:100%; background:var(--ink); overflow:hidden; }
+  body{
+    font-family:var(--font-body);
+    color:var(--text);
+    display:flex; align-items:center; justify-content:center;
+    -webkit-font-smoothing:antialiased;
+  }
+
+  /* Fixed stage, scaled by JS to fit any screen ------------------------- */
+  #stage{
+    width:1920px; height:1080px;
+    transform-origin:top left;
+    position:relative;
+    background:
+      radial-gradient(1200px 700px at 82% -10%, #10203a 0%, transparent 60%),
+      radial-gradient(900px 600px at -8% 110%, #141b30 0%, transparent 55%),
+      var(--ink);
+    display:grid;
+    grid-template-rows:auto auto 1fr auto;
+    padding:34px 40px 26px;
+    gap:20px;
+  }
+  /* faint scanline texture — reads as an ops console, stays subtle */
+  #stage::after{
+    content:""; position:absolute; inset:0; pointer-events:none;
+    background:repeating-linear-gradient(0deg, #ffffff05 0 1px, transparent 1px 3px);
+    mix-blend-mode:overlay; opacity:.35;
+  }
+
+  /* ---- Header --------------------------------------------------------- */
+  header{ display:flex; align-items:center; justify-content:space-between; z-index:2; }
+  .brand{ display:flex; align-items:center; gap:18px; }
+  .brand .mark{
+    width:52px; height:52px; border-radius:11px;
+    background:linear-gradient(145deg,#152441,#0d1526);
+    border:1px solid #2a3b5f;
+    display:grid; place-items:center; position:relative;
+    box-shadow:inset 0 1px 0 #ffffff12, 0 8px 24px #0006;
+  }
+  .brand .mark svg{ width:28px; height:28px; }
+  .brand h1{
+    font-family:var(--font-display); font-weight:700;
+    font-size:32px; letter-spacing:.14em; text-transform:uppercase;
+    line-height:1;
+  }
+  .brand .sub{
+    font-family:var(--font-mono); font-size:13px; letter-spacing:.28em;
+    color:var(--faint); text-transform:uppercase; margin-top:7px;
+  }
+
+  .status-cluster{ display:flex; align-items:center; gap:26px; }
+  .live-pill{
+    display:flex; align-items:center; gap:11px;
+    font-family:var(--font-mono); font-weight:600; font-size:14px;
+    letter-spacing:.22em; text-transform:uppercase;
+    padding:10px 16px; border-radius:999px;
+    border:1px solid #223052; background:#0d1526;
+  }
+  .dot{ width:11px; height:11px; border-radius:50%; background:var(--live);
+        box-shadow:0 0 0 0 var(--live); }
+  .live .dot{ animation:pulse 2.4s ease-out infinite; }
+  .stale .dot{ background:var(--med); animation:none; }
+  .demo  .dot{ background:var(--none); animation:none; }
+  .live  .live-label::after{ content:"LIVE"; }
+  .stale .live-label::after{ content:"STALE"; color:var(--med); }
+  .demo  .live-label::after{ content:"DEMO"; color:var(--none); }
+  @keyframes pulse{
+    0%{ box-shadow:0 0 0 0 #28e0c688; }
+    70%{ box-shadow:0 0 0 14px #28e0c600; }
+    100%{ box-shadow:0 0 0 0 #28e0c600; }
+  }
+
+  .clocks{ display:flex; gap:30px; text-align:right; }
+  .clock .t{ font-family:var(--font-mono); font-weight:500; font-size:34px; line-height:1;
+             font-variant-numeric:tabular-nums; }
+  .clock .l{ font-family:var(--font-mono); font-size:12px; letter-spacing:.24em;
+             color:var(--faint); text-transform:uppercase; margin-top:8px; }
+
+  /* ---- Threat strip (counters) --------------------------------------- */
+  .strip{
+    display:grid; grid-template-columns:repeat(5,1fr); gap:14px; z-index:2;
+  }
+  .stat{
+    background:linear-gradient(180deg,var(--panel-2),var(--panel));
+    border:1px solid var(--line); border-radius:14px;
+    padding:16px 20px; position:relative; overflow:hidden;
+  }
+  .stat .edge{ position:absolute; left:0; top:0; bottom:0; width:4px; }
+  .stat .n{ font-family:var(--font-display); font-weight:700; font-size:44px; line-height:1;
+            font-variant-numeric:tabular-nums; }
+  .stat .k{ font-family:var(--font-mono); font-size:12.5px; letter-spacing:.18em;
+            text-transform:uppercase; color:var(--muted); margin-top:9px; }
+  .stat.crit .edge{ background:var(--crit); }  .stat.crit .n{ color:var(--crit); }
+  .stat.high .edge{ background:var(--high); }  .stat.high .n{ color:var(--high); }
+  .stat.kev  .edge{ background:var(--live); }  .stat.kev  .n{ color:var(--live); }
+  .stat.med  .edge{ background:var(--med); }
+  .stat.feed .edge{ background:var(--low); }
+
+  /* ---- Panels --------------------------------------------------------- */
+  .board{ display:grid; grid-template-columns:1.32fr 1fr; gap:20px; min-height:0; z-index:2; }
+  .panel{
+    background:linear-gradient(180deg,#101827, #0d1423);
+    border:1px solid var(--line); border-radius:18px;
+    display:flex; flex-direction:column; min-height:0; overflow:hidden;
+    box-shadow:0 20px 50px -30px #000;
+  }
+  .panel > .head{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:18px 22px; border-bottom:1px solid var(--line-soft);
+    flex:none;
+  }
+  .panel .head h2{
+    font-family:var(--font-display); font-weight:600; font-size:20px;
+    letter-spacing:.16em; text-transform:uppercase;
+    display:flex; align-items:center; gap:12px;
+  }
+  .panel .head h2 .tick{ width:9px; height:9px; border-radius:2px; background:var(--live); }
+  .panel .head .meta{ font-family:var(--font-mono); font-size:12.5px; letter-spacing:.14em;
+                      color:var(--faint); text-transform:uppercase; }
+
+  .scroll{ position:relative; flex:1; min-height:0; overflow:hidden; }
+  .scroll .track{ position:absolute; left:0; right:0; top:0; will-change:transform; }
+
+  /* ---- Vulnerability rows -------------------------------------------- */
+  .vuln{
+    display:grid; grid-template-columns:8px 168px 1fr auto; align-items:center;
+    gap:18px; padding:15px 22px 15px 0;
+    border-bottom:1px solid var(--line-soft);
+  }
+  .vuln .rail{ align-self:stretch; border-radius:0 4px 4px 0; }
+  .vuln.crit .rail{ background:var(--crit); }
+  .vuln.high .rail{ background:var(--high); }
+  .vuln.med  .rail{ background:var(--med); }
+  .vuln.low  .rail{ background:var(--low); }
+  .vuln.none .rail{ background:var(--none); }
+
+  .vuln .id{ font-family:var(--font-mono); font-weight:600; font-size:19px; letter-spacing:.02em; }
+  .vuln .meta{ min-width:0; }
+  .vuln .prod{ font-weight:600; font-size:19px; white-space:nowrap; overflow:hidden;
+               text-overflow:ellipsis; }
+  .vuln .desc{ color:var(--muted); font-size:15px; margin-top:4px;
+               white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .vuln .kevtag{
+    display:inline-block; font-family:var(--font-mono); font-size:11px; font-weight:600;
+    letter-spacing:.14em; color:var(--live); border:1px solid #1f6d63;
+    background:#0c2723; padding:2px 8px; border-radius:5px; margin-right:9px;
+    vertical-align:1px;
+  }
+  .vuln .right{ text-align:right; display:flex; flex-direction:column; align-items:flex-end; gap:6px; }
+  .score{
+    font-family:var(--font-mono); font-weight:600; font-size:20px;
+    min-width:74px; text-align:center; padding:5px 0; border-radius:8px;
+    font-variant-numeric:tabular-nums;
+  }
+  .crit .score{ color:var(--crit); background:#3a0e14; }
+  .high .score{ color:var(--high); background:#3a1c0b; }
+  .med  .score{ color:var(--med);  background:#33290a; }
+  .low  .score{ color:var(--low);  background:#0e2140; }
+  .none .score{ color:var(--none); background:#20263a; }
+  .vuln .when{ font-family:var(--font-mono); font-size:13px; color:var(--faint); }
+
+  /* ---- News rows ------------------------------------------------------ */
+  .news{
+    display:grid; grid-template-columns:1fr auto; gap:8px 18px;
+    padding:16px 22px; border-bottom:1px solid var(--line-soft);
+  }
+  .news .src{ grid-column:1; font-family:var(--font-mono); font-size:12.5px; font-weight:600;
+              letter-spacing:.12em; text-transform:uppercase; color:var(--live); }
+  .news .when{ grid-column:2; grid-row:1; font-family:var(--font-mono); font-size:13px;
+               color:var(--faint); text-align:right; white-space:nowrap; }
+  .news .title{ grid-column:1 / -1; font-size:21px; font-weight:600; line-height:1.32;
+                display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+                overflow:hidden; }
+
+  /* ---- Footer --------------------------------------------------------- */
+  footer{
+    display:flex; align-items:center; justify-content:space-between;
+    font-family:var(--font-mono); font-size:13px; letter-spacing:.1em;
+    color:var(--faint); text-transform:uppercase; z-index:2;
+    padding-top:4px; border-top:1px solid var(--line-soft);
+  }
+  footer .sources{ display:flex; gap:22px; flex-wrap:wrap; }
+  footer b{ color:var(--muted); font-weight:600; }
+  .refresh-bar{ height:3px; background:#12203a; border-radius:2px; width:220px; overflow:hidden; }
+  .refresh-bar i{ display:block; height:100%; width:0%; background:var(--live);
+                  box-shadow:0 0 10px var(--live); }
+
+  @media (prefers-reduced-motion: reduce){
+    .track{ transition:none !important; }
+    .dot{ animation:none !important; }
+  }
+</style>
+</head>
+<body>
+  <div id="stage">
+    <header>
+      <div class="brand">
+        <div class="mark">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#28E0C6" stroke-width="1.8"
+               stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2 4 5v6c0 5 3.5 8 8 11 4.5-3 8-6 8-11V5l-8-3Z"/>
+            <path d="M9 12l2 2 4-4"/>
+          </svg>
+        </div>
+        <div>
+          <h1 id="board-title">SOC Wallboard</h1>
+          <div class="sub" id="board-sub">Threat &amp; Vulnerability Watch</div>
+        </div>
+      </div>
+
+      <div class="status-cluster">
+        <div class="live-pill live" id="status">
+          <span class="dot"></span><span class="live-label" style="letter-spacing:.22em"></span>
+        </div>
+        <div class="clocks">
+          <div class="clock"><div class="t" id="clock-utc">--:--:--</div><div class="l">UTC</div></div>
+          <div class="clock"><div class="t" id="clock-local">--:--:--</div><div class="l" id="local-label">LOCAL</div></div>
+        </div>
+      </div>
+    </header>
+
+    <div class="strip">
+      <div class="stat kev"><div class="edge"></div><div class="n" id="s-kev">0</div><div class="k">KEV · 7 days</div></div>
+      <div class="stat crit"><div class="edge"></div><div class="n" id="s-crit">0</div><div class="k">Critical open</div></div>
+      <div class="stat high"><div class="edge"></div><div class="n" id="s-high">0</div><div class="k">High open</div></div>
+      <div class="stat med"><div class="edge"></div><div class="n" id="s-vuln">0</div><div class="k">Vulns tracked</div></div>
+      <div class="stat feed"><div class="edge"></div><div class="n" id="s-feed">0/0</div><div class="k">Feeds online</div></div>
+    </div>
+
+    <div class="board">
+      <section class="panel">
+        <div class="head">
+          <h2><span class="tick"></span>Recent Vulnerabilities</h2>
+          <span class="meta" id="vuln-meta">KEV catalog + critical CVEs</span>
+        </div>
+        <div class="scroll"><div class="track" id="vuln-list"></div></div>
+      </section>
+
+      <section class="panel">
+        <div class="head">
+          <h2><span class="tick"></span>Security News</h2>
+          <span class="meta" id="news-meta">Aggregated feeds</span>
+        </div>
+        <div class="scroll"><div class="track" id="news-list"></div></div>
+      </section>
+    </div>
+
+    <footer>
+      <div class="sources" id="source-line"><b>Sources:</b></div>
+      <div style="display:flex; align-items:center; gap:16px;">
+        <span id="updated">Updated —</span>
+        <div class="refresh-bar"><i id="refresh-fill"></i></div>
+      </div>
+    </footer>
+  </div>
+
+<script>
+/* ===========================================================================
+   CONFIG  —  edit this block, nothing else needed
+   =========================================================================== */
+const CONFIG = {
+  title:    "SOC Wallboard",
+  subtitle: "Threat & Vulnerability Watch",
+
+  // How often to pull fresh data, in minutes.
+  refreshMinutes: 12,
+
+  // BACKEND DATA (recommended). Same-origin JSON files produced by the GitHub
+  // Action (scripts/build-data.mjs). No CORS, no proxy, works on locked-down
+  // networks. Set either to "" to skip and use the live in-browser fetch below.
+  localData: { vulns: "data/vulns.json", news: "data/news.json" },
+
+  // Data proxy. Browsers block direct fetches of most feeds (CORS), so
+  // requests are wrapped as: proxy + encodeURIComponent(targetUrl).
+  //
+  // Default is a public proxy so this works immediately. FOR A REAL SOC WALL,
+  // replace it with your own. A minimal self-hosted proxy (Cloudflare Worker
+  // or tiny Node/nginx service) that fetches ?url= and echoes the body with
+  // "Access-Control-Allow-Origin: *" is all you need. Then set e.g.:
+  //   proxy: "https://feeds.yourcompany.internal/get?url="
+  proxy: "https://api.allorigins.win/raw?url=",
+
+  // News feeds (RSS/Atom). Add, remove, or reorder freely.
+  newsFeeds: [
+    { name: "The Hacker News", url: "https://feeds.feedburner.com/TheHackersNews" },
+    { name: "BleepingComputer", url: "https://www.bleepingcomputer.com/feed/" },
+    { name: "Krebs on Security", url: "https://krebsonsecurity.com/feed/" },
+    { name: "SANS ISC",         url: "https://isc.sans.edu/rssfeed.xml" },
+    { name: "CISA Advisories",  url: "https://www.cisa.gov/cybersecurity-advisories/all.xml" }
+  ],
+  maxNews: 24,
+
+  // Vulnerability sources
+  vuln: {
+    // CISA Known Exploited Vulnerabilities catalog (JSON)
+    kevUrl: "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
+    kevRecentDays: 21,          // only show KEV entries added within N days
+    // NVD recent CVEs (used to surface fresh critical/high scores)
+    nvdEnabled: true,
+    nvdMinCvss: 7.0,            // only pull CVEs scoring at/above this
+    nvdLookbackDays: 3,        // NVD window (kept small; wall shows the newest)
+    maxVulns: 30
+  }
+};
+
+/* ===========================================================================
+   Fit the fixed 1920x1080 stage to any screen
+   =========================================================================== */
+const stage = document.getElementById('stage');
+function fitStage(){
+  const s = Math.min(window.innerWidth/1920, window.innerHeight/1080);
+  stage.style.transform = `scale(${s})`;
+  stage.style.left = ((window.innerWidth - 1920*s)/2) + 'px';
+  stage.style.top  = ((window.innerHeight - 1080*s)/2) + 'px';
+  stage.style.position = 'absolute';
+}
+window.addEventListener('resize', fitStage);
+
+/* ===========================================================================
+   Helpers
+   =========================================================================== */
+const $ = id => document.getElementById(id);
+const esc = s => (s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function relTime(d){
+  if(!d) return '';
+  const s = Math.max(1, (Date.now() - d.getTime())/1000);
+  if(s < 60)   return Math.floor(s)+'s ago';
+  if(s < 3600) return Math.floor(s/60)+'m ago';
+  if(s < 86400)return Math.floor(s/3600)+'h ago';
+  return Math.floor(s/86400)+'d ago';
+}
+function daysAgo(d){ return d ? (Date.now()-d.getTime())/86400000 : 1e9; }
+
+function band(score){
+  if(score == null || isNaN(score)) return 'none';
+  if(score >= 9.0) return 'crit';
+  if(score >= 7.0) return 'high';
+  if(score >= 4.0) return 'med';
+  if(score > 0)    return 'low';
+  return 'none';
+}
+
+async function grab(url, {json=false} = {}){
+  const wrapped = CONFIG.proxy + encodeURIComponent(url);
+  const res = await fetch(wrapped, { cache:'no-store' });
+  if(!res.ok) throw new Error('HTTP '+res.status);
+  return json ? res.json() : res.text();
+}
+
+/* ===========================================================================
+   Fetch: news (RSS/Atom)
+   =========================================================================== */
+async function fetchOneFeed(feed){
+  const xml = await grab(feed.url);
+  const doc = new DOMParser().parseFromString(xml, 'text/xml');
+  if(doc.querySelector('parsererror')) throw new Error('parse');
+  const items = [...doc.querySelectorAll('item, entry')].slice(0, 12);
+  return items.map(it => {
+    const title = (it.querySelector('title')?.textContent || '').trim();
+    const dateStr = it.querySelector('pubDate, published, updated, date')?.textContent;
+    const date = dateStr ? new Date(dateStr) : null;
+    return { source: feed.name, title, date: (date && !isNaN(date)) ? date : null };
+  }).filter(x => x.title);
+}
+
+async function fetchNews(){
+  const results = await Promise.allSettled(CONFIG.newsFeeds.map(fetchOneFeed));
+  let online = 0, items = [];
+  results.forEach(r => { if(r.status === 'fulfilled'){ online++; items.push(...r.value); } });
+  items.sort((a,b) => (b.date?.getTime()||0) - (a.date?.getTime()||0));
+  return { items: items.slice(0, CONFIG.maxNews), online, total: CONFIG.newsFeeds.length };
+}
+
+/* ===========================================================================
+   Fetch: vulnerabilities (CISA KEV + NVD)
+   =========================================================================== */
+async function fetchKEV(){
+  const data = await grab(CONFIG.vuln.kevUrl, { json:true });
+  const list = (data.vulnerabilities || [])
+    .map(v => ({
+      id: v.cveID,
+      product: (v.vendorProject ? v.vendorProject + ' ' : '') + (v.product || ''),
+      desc: v.vulnerabilityName || v.shortDescription || '',
+      date: v.dateAdded ? new Date(v.dateAdded) : null,
+      score: null, kev: true
+    }))
+    .filter(v => daysAgo(v.date) <= CONFIG.vuln.kevRecentDays)
+    .sort((a,b) => (b.date?.getTime()||0) - (a.date?.getTime()||0));
+  return list;
+}
+
+async function fetchNVD(){
+  if(!CONFIG.vuln.nvdEnabled) return [];
+  const end = new Date();
+  const start = new Date(Date.now() - CONFIG.vuln.nvdLookbackDays*86400000);
+  const iso = d => d.toISOString().slice(0,19)+'.000';
+  const url = 'https://services.nvd.nist.gov/rest/json/cves/2.0'
+    + '?pubStartDate=' + iso(start) + '&pubEndDate=' + iso(end)
+    + '&resultsPerPage=60';
+  const data = await grab(url, { json:true });
+  return (data.vulnerabilities || []).map(w => {
+    const c = w.cve;
+    const m = c.metrics || {};
+    const metric = (m.cvssMetricV31 || m.cvssMetricV30 || m.cvssMetricV2 || [])[0];
+    const score = metric ? metric.cvssData.baseScore : null;
+    const desc = (c.descriptions || []).find(d => d.lang === 'en')?.value || '';
+    return {
+      id: c.id, product: '', desc,
+      date: c.published ? new Date(c.published) : null,
+      score, kev: false
+    };
+  }).filter(v => v.score != null && v.score >= CONFIG.vuln.nvdMinCvss);
+}
+
+async function fetchVulns(){
+  const [kevRes, nvdRes] = await Promise.allSettled([fetchKEV(), fetchNVD()]);
+  const kev = kevRes.status === 'fulfilled' ? kevRes.value : [];
+  const nvd = nvdRes.status === 'fulfilled' ? nvdRes.value : [];
+  const kevSuccess = kevRes.status === 'fulfilled';
+
+  // merge, KEV wins on duplicate CVE id
+  const byId = new Map();
+  nvd.forEach(v => byId.set(v.id, v));
+  kev.forEach(v => {
+    const ex = byId.get(v.id);
+    byId.set(v.id, ex ? { ...ex, kev:true } : v);
+  });
+  const merged = [...byId.values()].sort((a,b) => {
+    if(a.kev !== b.kev) return a.kev ? -1 : 1;            // exploited first
+    return (b.date?.getTime()||0) - (a.date?.getTime()||0); // then newest
+  });
+
+  const kevRecent = kev.filter(v => daysAgo(v.date) <= 7).length;
+  return {
+    items: merged.slice(0, CONFIG.vuln.maxVulns),
+    online: kevSuccess ? 1 : 0, total: 1,
+    kevRecent,
+    crit: merged.filter(v => band(v.score) === 'crit').length,
+    high: merged.filter(v => band(v.score) === 'high').length
+  };
+}
+
+/* ===========================================================================
+   Render
+   =========================================================================== */
+function renderVulns(items){
+  $('vuln-list').innerHTML = items.map(v => {
+    const b = band(v.score);
+    const score = v.score != null ? Number(v.score).toFixed(1) : (v.kev ? 'KEV' : '—');
+    const product = v.product?.trim() || v.desc || 'Details pending';
+    return `<div class="vuln ${b}">
+      <div class="rail"></div>
+      <div class="id">${esc(v.id)}</div>
+      <div class="meta">
+        <div class="prod">${v.kev?'<span class="kevtag">EXPLOITED</span>':''}${esc(product)}</div>
+        <div class="desc">${esc(v.desc||'')}</div>
+      </div>
+      <div class="right">
+        <div class="score">${esc(score)}</div>
+        <div class="when">${v.date?relTime(v.date):''}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderNews(items){
+  $('news-list').innerHTML = items.map(n => `
+    <div class="news">
+      <div class="src">${esc(n.source)}</div>
+      <div class="when">${n.date?relTime(n.date):''}</div>
+      <div class="title">${esc(n.title)}</div>
+    </div>`).join('');
+}
+
+function setStatus(state){ // 'live' | 'stale' | 'demo'
+  const el = $('status');
+  el.classList.remove('live','stale','demo');
+  el.classList.add(state);
+}
+
+/* ===========================================================================
+   Auto-scroll long lists (credits-roll style, readable pace)
+   =========================================================================== */
+function makeScroller(trackId){
+  const track = $(trackId);
+  const view = track.parentElement;
+  let raf, phase, phaseStart, overflow;
+  const PACE = 26;        // px/sec
+  const PAUSE = 4200;     // ms hold at top & bottom
+
+  function reset(){
+    cancelAnimationFrame(raf);
+    track.style.transform = 'translateY(0)';
+    overflow = track.scrollHeight - view.clientHeight;
+    if(overflow <= 4) return;             // fits — no scroll needed
+    phase = 'holdTop'; phaseStart = performance.now();
+    raf = requestAnimationFrame(step);
+  }
+  function step(now){
+    const dt = now - phaseStart;
+    if(phase === 'holdTop'){
+      if(dt > PAUSE){ phase='down'; phaseStart=now; }
+    } else if(phase === 'down'){
+      const y = Math.min(overflow, (dt/1000)*PACE);
+      track.style.transform = `translateY(${-y}px)`;
+      if(y >= overflow){ phase='holdBottom'; phaseStart=now; }
+    } else if(phase === 'holdBottom'){
+      if(dt > PAUSE){ phase='up'; phaseStart=now; }
+    } else if(phase === 'up'){
+      const y = Math.max(0, overflow - (dt/1000)*PACE*1.8);
+      track.style.transform = `translateY(${-y}px)`;
+      if(y <= 0){ phase='holdTop'; phaseStart=now; }
+    }
+    raf = requestAnimationFrame(step);
+  }
+  return reset;
+}
+let rescrollVulns, rescrollNews;
+
+/* ===========================================================================
+   Refresh cycle
+   =========================================================================== */
+let lastGoodVulns = null, lastGoodNews = null;
+
+/* Backend-first data layer: read same-origin JSON produced by the Action,
+   fall back to the live in-browser fetch if the files aren't there. */
+async function loadLocal(path){
+  const r = await fetch(path, { cache:'no-store' });
+  if(!r.ok) throw new Error('HTTP '+r.status);
+  return r.json();
+}
+function adaptVulns(json){
+  const items = (json.items||[]).map(v => ({ ...v, date: v.date ? new Date(v.date) : null }))
+                                .slice(0, CONFIG.vuln.maxVulns);
+  return { items, online:1, total:1,
+    kevRecent: items.filter(v=>v.kev && v.date && (Date.now()-v.date.getTime())<=7*864e5).length,
+    crit: items.filter(v=>band(v.score)==='crit').length,
+    high: items.filter(v=>band(v.score)==='high').length };
+}
+function adaptNews(json){
+  const items = (json.items||[]).map(n => ({ ...n, date: n.date ? new Date(n.date) : null }))
+                                .slice(0, CONFIG.maxNews);
+  const total = json.health ? json.health.length : 1;
+  const online = json.health ? json.health.filter(h=>h.ok).length : 1;
+  return { items, online, total };
+}
+async function getVulns(){
+  if(CONFIG.localData.vulns){
+    try{ return adaptVulns(await loadLocal(CONFIG.localData.vulns)); }
+    catch(e){ console.warn('[wallboard] local vulns unavailable, live fallback -', e.message); }
+  }
+  return fetchVulns();
+}
+async function getNews(){
+  if(CONFIG.localData.news){
+    try{ return adaptNews(await loadLocal(CONFIG.localData.news)); }
+    catch(e){ console.warn('[wallboard] local news unavailable, live fallback -', e.message); }
+  }
+  return fetchNews();
+}
+
+async function refresh(){
+  let feedsOnline = 0, feedsTotal = 0, anyLive = false, anyFail = false;
+
+  // Vulnerabilities
+  try{
+    const v = await getVulns();
+    if(v.items.length){
+      lastGoodVulns = v; renderVulns(v.items); rescrollVulns();
+      $('s-kev').textContent  = v.kevRecent;
+      $('s-crit').textContent = v.crit;
+      $('s-high').textContent = v.high;
+      $('s-vuln').textContent = v.items.length;
+      feedsOnline += v.online; feedsTotal += v.total; anyLive = true;
+    } else { anyFail = true; }
+  }catch(e){ anyFail = true; feedsTotal += 1; }
+
+  // News
+  try{
+    const n = await getNews();
+    if(n.items.length){
+      lastGoodNews = n; renderNews(n.items); rescrollNews();
+      feedsOnline += n.online; feedsTotal += n.total; anyLive = true;
+    } else { anyFail = true; feedsTotal += CONFIG.newsFeeds.length; }
+  }catch(e){ anyFail = true; feedsTotal += CONFIG.newsFeeds.length; }
+
+  $('s-feed').textContent = feedsOnline + '/' + feedsTotal;
+
+  // Status: live if anything fresh loaded; demo if nothing ever loaded
+  if(anyLive && lastGoodVulns && lastGoodNews)      setStatus('live');
+  else if(lastGoodVulns || lastGoodNews)            setStatus('stale');
+  else                                              setStatus('demo');
+
+  const now = new Date();
+  $('updated').textContent = 'Updated ' + now.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+}
+
+/* ===========================================================================
+   Clocks + refresh progress bar
+   =========================================================================== */
+function tickClocks(){
+  const now = new Date();
+  $('clock-utc').textContent = now.toISOString().slice(11,19);
+  $('clock-local').textContent = now.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+}
+$('local-label').textContent = (Intl.DateTimeFormat().resolvedOptions().timeZone || 'LOCAL').split('/').pop().replace('_',' ').toUpperCase();
+
+let cycleStart = Date.now();
+function tickRefreshBar(){
+  const span = CONFIG.refreshMinutes*60000;
+  const pct = Math.min(100, ((Date.now()-cycleStart)/span)*100);
+  $('refresh-fill').style.width = pct + '%';
+}
+
+/* ===========================================================================
+   Seed data — shown instantly, replaced the moment live feeds arrive.
+   Clearly illustrative; the board wears a DEMO badge until real data loads.
+   =========================================================================== */
+const SEED_VULNS = [
+  {id:'CVE-2025-48210', product:'Acme Edge Gateway', desc:'Unauthenticated remote code execution via crafted request', date:new Date(Date.now()-6*3600e3), score:9.8, kev:true},
+  {id:'CVE-2025-47761', product:'Orbit Mail Server', desc:'Authentication bypass in admin console', date:new Date(Date.now()-20*3600e3), score:9.1, kev:true},
+  {id:'CVE-2025-46003', product:'Nimbus VPN Client', desc:'Heap overflow leading to privilege escalation', date:new Date(Date.now()-2*86400e3), score:8.4, kev:false},
+  {id:'CVE-2025-45820', product:'Ledger DB Core', desc:'SQL injection in reporting endpoint', date:new Date(Date.now()-2.4*86400e3), score:7.5, kev:false},
+  {id:'CVE-2025-45119', product:'PixelCMS', desc:'Stored XSS in media library', date:new Date(Date.now()-3*86400e3), score:6.1, kev:false},
+  {id:'CVE-2025-44890', product:'Harbor Router OS', desc:'Improper access control on management API', date:new Date(Date.now()-3.5*86400e3), score:8.8, kev:true},
+];
+const SEED_NEWS = [
+  {source:'The Hacker News', title:'Seed headline — live feed loading. Newly disclosed critical flaw under active exploitation, patch urged.', date:new Date(Date.now()-42*60e3)},
+  {source:'BleepingComputer', title:'Seed headline — CISA adds two vulnerabilities to the Known Exploited Vulnerabilities catalog.', date:new Date(Date.now()-95*60e3)},
+  {source:'Krebs on Security', title:'Seed headline — Phishing campaign abuses trusted cloud service to bypass email filters.', date:new Date(Date.now()-3*3600e3)},
+  {source:'SANS ISC', title:'Seed headline — Spike in scanning activity against exposed management interfaces observed.', date:new Date(Date.now()-5*3600e3)},
+  {source:'CISA Advisories', title:'Seed headline — Industrial control system advisory published for widely deployed controller.', date:new Date(Date.now()-7*3600e3)},
+];
+
+/* ===========================================================================
+   Boot
+   =========================================================================== */
+function boot(){
+  $('board-title').textContent = CONFIG.title;
+  $('board-sub').textContent = CONFIG.subtitle;
+  $('source-line').innerHTML = '<b>Sources:</b> ' +
+    ['CISA KEV', CONFIG.vuln.nvdEnabled ? 'NVD' : null, ...CONFIG.newsFeeds.map(f=>f.name)]
+      .filter(Boolean).map(esc).join(' · ');
+
+  fitStage();
+  tickClocks(); setInterval(tickClocks, 1000);
+  setInterval(tickRefreshBar, 1000);
+
+  rescrollVulns = makeScroller('vuln-list');
+  rescrollNews  = makeScroller('news-list');
+
+  // paint seed immediately so the wall is never blank
+  renderVulns(SEED_VULNS); renderNews(SEED_NEWS);
+  $('s-kev').textContent='3'; $('s-crit').textContent='3'; $('s-high').textContent='2';
+  $('s-vuln').textContent=SEED_VULNS.length; $('s-feed').textContent='0/'+(CONFIG.newsFeeds.length+1);
+  setStatus('demo');
+  requestAnimationFrame(()=>{ rescrollVulns(); rescrollNews(); });
+
+  // then go live
+  const loop = async () => { cycleStart = Date.now(); await refresh(); };
+  loop();
+  setInterval(loop, CONFIG.refreshMinutes*60000);
+}
+boot();
+</script>
+</body>
+</html>
