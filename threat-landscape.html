@@ -1,0 +1,628 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=1920, initial-scale=1" />
+<title>Threat Landscape — SOC Wallboard</title>
+
+<!--
+  ============================================================================
+  THREAT LANDSCAPE  ·  companion wallboard for Yodeck
+  ============================================================================
+  Pairs with the threat/vulnerability board. Where that one shows the newest
+  items, this one shows the strategic picture: current threat posture, live
+  ransomware activity, a rotating MITRE ATT&CK spotlight, and a campaign
+  watchlist your team curates.
+
+  DEPLOY THE SAME WAY AS BOARD 1
+  - Host the file (internal web server, GitHub Pages, S3...) and add it in
+    Yodeck as a "Web Page" content item, or upload the .html directly.
+  - Auto-scales a fixed 1920x1080 stage to any screen. The page refreshes
+    itself; leave Yodeck's own refresh off.
+  - Rotate the two boards in one Yodeck playlist, or place them in two zones
+    of a Yodeck Layout to show both at once.
+
+  EDIT THE  CONFIG  BLOCK NEAR THE BOTTOM. Threat posture is set by you (or
+  auto-derived); the watchlist is yours to curate; ransomware data is live
+  from a public feed with clearly-labelled seed data until it loads.
+  ============================================================================
+-->
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+  :root{
+    --ink:#0A0E1A; --panel:#0F1626; --panel-2:#131C2E;
+    --line:#212B44; --line-soft:#1a2237;
+    --text:#E9EEF9; --muted:#8493AE; --faint:#59668A;
+    --live:#28E0C6;
+    --guarded:#4C9BFF; --elevated:#F5C13B; --high:#FF7A2F; --severe:#FB3B4E;
+    --font-display:'Chakra Petch', system-ui, sans-serif;
+    --font-body:'IBM Plex Sans', system-ui, sans-serif;
+    --font-mono:'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  html,body{ height:100%; background:var(--ink); overflow:hidden; }
+  body{ font-family:var(--font-body); color:var(--text); display:flex;
+        align-items:center; justify-content:center; -webkit-font-smoothing:antialiased; }
+
+  #stage{
+    width:1920px; height:1080px; transform-origin:top left; position:absolute;
+    background:
+      radial-gradient(1200px 700px at 82% -10%, #10203a 0%, transparent 60%),
+      radial-gradient(900px 600px at -8% 110%, #141b30 0%, transparent 55%),
+      var(--ink);
+    display:grid; grid-template-rows:auto auto 1fr auto; padding:34px 40px 26px; gap:20px;
+  }
+  #stage::after{ content:""; position:absolute; inset:0; pointer-events:none;
+    background:repeating-linear-gradient(0deg,#ffffff05 0 1px, transparent 1px 3px);
+    mix-blend-mode:overlay; opacity:.35; }
+
+  /* ---- Header (matches board 1) -------------------------------------- */
+  header{ display:flex; align-items:center; justify-content:space-between; z-index:2; }
+  .brand{ display:flex; align-items:center; gap:18px; }
+  .brand .mark{ width:52px; height:52px; border-radius:11px;
+    background:linear-gradient(145deg,#152441,#0d1526); border:1px solid #2a3b5f;
+    display:grid; place-items:center; box-shadow:inset 0 1px 0 #ffffff12, 0 8px 24px #0006; }
+  .brand .mark svg{ width:28px; height:28px; }
+  .brand h1{ font-family:var(--font-display); font-weight:700; font-size:32px;
+    letter-spacing:.14em; text-transform:uppercase; line-height:1; }
+  .brand .sub{ font-family:var(--font-mono); font-size:13px; letter-spacing:.28em;
+    color:var(--faint); text-transform:uppercase; margin-top:7px; }
+  .status-cluster{ display:flex; align-items:center; gap:26px; }
+  .live-pill{ display:flex; align-items:center; gap:11px; font-family:var(--font-mono);
+    font-weight:600; font-size:14px; letter-spacing:.22em; text-transform:uppercase;
+    padding:10px 16px; border-radius:999px; border:1px solid #223052; background:#0d1526; }
+  .dot{ width:11px; height:11px; border-radius:50%; background:var(--live); }
+  .live .dot{ animation:pulse 2.4s ease-out infinite; }
+  .demo .dot{ background:#7E8BA6; animation:none; }
+  .stale .dot{ background:var(--elevated); animation:none; }
+  .live  .live-label::after{ content:"LIVE"; }
+  .demo  .live-label::after{ content:"DEMO"; color:#7E8BA6; }
+  .stale .live-label::after{ content:"STALE"; color:var(--elevated); }
+  @keyframes pulse{ 0%{box-shadow:0 0 0 0 #28e0c688;} 70%{box-shadow:0 0 0 14px #28e0c600;} 100%{box-shadow:0 0 0 0 #28e0c600;} }
+  .clocks{ display:flex; gap:30px; text-align:right; }
+  .clock .t{ font-family:var(--font-mono); font-weight:500; font-size:34px; line-height:1; font-variant-numeric:tabular-nums; }
+  .clock .l{ font-family:var(--font-mono); font-size:12px; letter-spacing:.24em; color:var(--faint); text-transform:uppercase; margin-top:8px; }
+
+  /* ---- Threat posture band (the hero) -------------------------------- */
+  .posture{
+    display:grid; grid-template-columns:1.1fr 1.4fr; gap:30px; align-items:center;
+    border:1px solid var(--line); border-radius:18px; padding:22px 30px; z-index:2;
+    position:relative; overflow:hidden;
+    background:linear-gradient(180deg,#101827,#0d1423);
+  }
+  .posture::before{ /* posture-coloured wash on the left edge */
+    content:""; position:absolute; left:0; top:0; bottom:0; width:6px;
+    background:var(--lvl-color, var(--elevated)); }
+  .posture .headline{ display:flex; flex-direction:column; gap:8px; }
+  .posture .eyebrow{ font-family:var(--font-mono); font-size:14px; letter-spacing:.3em;
+    text-transform:uppercase; color:var(--faint); }
+  .posture .level{ font-family:var(--font-display); font-weight:700; font-size:78px;
+    line-height:.92; letter-spacing:.02em; color:var(--lvl-color, var(--elevated));
+    text-shadow:0 0 40px color-mix(in srgb, var(--lvl-color, var(--elevated)) 45%, transparent); }
+  .posture .directive{ font-size:19px; color:var(--muted); max-width:520px; line-height:1.4; }
+
+  .posture .right{ display:flex; flex-direction:column; gap:18px; }
+  .meter{ display:grid; grid-template-columns:repeat(4,1fr); gap:8px; }
+  .seg{ height:16px; border-radius:5px; background:#1b2238; position:relative; overflow:hidden;
+        border:1px solid #232c46; }
+  .seg span{ position:absolute; inset:0; display:grid; place-items:end center; padding-bottom:0;
+        font-family:var(--font-mono); font-size:11px; letter-spacing:.14em; color:var(--faint);
+        text-transform:uppercase; transform:translateY(20px); }
+  .seg-label{ font-family:var(--font-mono); font-size:11px; letter-spacing:.14em;
+        color:var(--faint); text-transform:uppercase; text-align:center; margin-top:6px; }
+  .seg.on-guarded{ background:var(--guarded); box-shadow:0 0 16px -2px var(--guarded); }
+  .seg.on-elevated{ background:var(--elevated); box-shadow:0 0 16px -2px var(--elevated); }
+  .seg.on-high{ background:var(--high); box-shadow:0 0 16px -2px var(--high); }
+  .seg.on-severe{ background:var(--severe); box-shadow:0 0 16px -2px var(--severe); }
+  .meter-row{ display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-top:4px; }
+
+  .chips{ display:grid; grid-template-columns:repeat(4,1fr); gap:12px; }
+  .chip{ background:#0e1626; border:1px solid var(--line); border-radius:12px; padding:12px 14px; }
+  .chip .v{ font-family:var(--font-display); font-weight:700; font-size:26px; line-height:1;
+        font-variant-numeric:tabular-nums; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .chip .k{ font-family:var(--font-mono); font-size:11px; letter-spacing:.14em;
+        text-transform:uppercase; color:var(--muted); margin-top:8px; }
+
+  /* ---- Main board ---------------------------------------------------- */
+  .board{ display:grid; grid-template-columns:1.3fr 1fr; gap:20px; min-height:0; z-index:2; }
+  .col{ display:grid; gap:20px; min-height:0; }
+  .col.right{ grid-template-rows:auto 1fr; }
+  .panel{ background:linear-gradient(180deg,#101827,#0d1423); border:1px solid var(--line);
+    border-radius:18px; display:flex; flex-direction:column; min-height:0; overflow:hidden;
+    box-shadow:0 20px 50px -30px #000; }
+  .panel > .head{ display:flex; align-items:center; justify-content:space-between;
+    padding:16px 22px; border-bottom:1px solid var(--line-soft); flex:none; }
+  .panel .head h2{ font-family:var(--font-display); font-weight:600; font-size:19px;
+    letter-spacing:.16em; text-transform:uppercase; display:flex; align-items:center; gap:12px; }
+  .panel .head h2 .tick{ width:9px; height:9px; border-radius:2px; background:var(--live); }
+  .panel .head .meta{ font-family:var(--font-mono); font-size:12px; letter-spacing:.14em;
+    color:var(--faint); text-transform:uppercase; }
+  .scroll{ position:relative; flex:1; min-height:0; overflow:hidden; }
+  .scroll .track{ position:absolute; left:0; right:0; top:0; will-change:transform; }
+
+  /* ---- Ransomware rows ----------------------------------------------- */
+  .rw{ display:grid; grid-template-columns:1fr auto; gap:6px 16px; padding:15px 22px;
+       border-bottom:1px solid var(--line-soft); align-items:center; }
+  .rw .group{ font-family:var(--font-mono); font-weight:600; font-size:17px; color:var(--severe);
+       letter-spacing:.02em; }
+  .rw .victim{ grid-column:1; font-size:20px; font-weight:600; white-space:nowrap;
+       overflow:hidden; text-overflow:ellipsis; }
+  .rw .tags{ grid-column:1; display:flex; gap:8px; margin-top:2px; flex-wrap:wrap; }
+  .rw .tag{ font-family:var(--font-mono); font-size:12px; color:var(--muted);
+       border:1px solid var(--line); border-radius:6px; padding:2px 8px; letter-spacing:.06em; }
+  .rw .when{ grid-column:2; grid-row:1 / span 3; font-family:var(--font-mono); font-size:13px;
+       color:var(--faint); text-align:right; white-space:nowrap; align-self:center; }
+
+  /* ---- ATT&CK spotlight ---------------------------------------------- */
+  .spot{ padding:22px; display:flex; flex-direction:column; gap:14px; }
+  .spot .row1{ display:flex; align-items:baseline; gap:14px; }
+  .spot .tid{ font-family:var(--font-mono); font-weight:600; font-size:22px; color:var(--live);
+       border:1px solid #1f6d63; background:#0c2723; padding:4px 12px; border-radius:8px; }
+  .spot .tname{ font-family:var(--font-display); font-weight:700; font-size:28px; line-height:1.05; }
+  .spot .tactic{ font-family:var(--font-mono); font-size:13px; letter-spacing:.16em;
+       text-transform:uppercase; color:var(--elevated); }
+  .spot .tdesc{ font-size:17px; color:var(--muted); line-height:1.45; }
+  .spot .tip{ font-size:15px; color:var(--text); background:#0e1a2a; border-left:3px solid var(--live);
+       padding:11px 15px; border-radius:0 10px 10px 0; }
+  .spot .tip b{ font-family:var(--font-mono); font-size:12px; letter-spacing:.14em;
+       text-transform:uppercase; color:var(--live); display:block; margin-bottom:4px; }
+  .spot .dots{ display:flex; gap:6px; margin-top:auto; padding-top:8px; }
+  .spot .dots i{ width:22px; height:4px; border-radius:2px; background:#233052; }
+  .spot .dots i.on{ background:var(--live); }
+
+  /* ---- Watchlist rows ------------------------------------------------ */
+  .wl{ display:grid; grid-template-columns:6px 1fr auto; gap:14px; padding:14px 22px;
+       border-bottom:1px solid var(--line-soft); align-items:center; }
+  .wl .rail{ align-self:stretch; border-radius:0 4px 4px 0; }
+  .wl.hot .rail{ background:var(--severe); } .wl.warm .rail{ background:var(--high); }
+  .wl.watch .rail{ background:var(--elevated); } .wl.info .rail{ background:var(--guarded); }
+  .wl .name{ font-weight:600; font-size:18px; }
+  .wl .desc{ color:var(--muted); font-size:14px; margin-top:3px; }
+  .wl .badge{ font-family:var(--font-mono); font-size:11px; font-weight:600; letter-spacing:.14em;
+       text-transform:uppercase; padding:4px 10px; border-radius:6px; white-space:nowrap; }
+  .wl.hot .badge{ color:var(--severe); background:#3a0e14; }
+  .wl.warm .badge{ color:var(--high); background:#3a1c0b; }
+  .wl.watch .badge{ color:var(--elevated); background:#33290a; }
+  .wl.info .badge{ color:var(--guarded); background:#0e2140; }
+
+  /* ---- Footer -------------------------------------------------------- */
+  footer{ display:flex; align-items:center; justify-content:space-between;
+    font-family:var(--font-mono); font-size:13px; letter-spacing:.1em; color:var(--faint);
+    text-transform:uppercase; z-index:2; padding-top:4px; border-top:1px solid var(--line-soft); }
+  footer b{ color:var(--muted); font-weight:600; }
+  .refresh-bar{ height:3px; background:#12203a; border-radius:2px; width:220px; overflow:hidden; }
+  .refresh-bar i{ display:block; height:100%; width:0%; background:var(--live); box-shadow:0 0 10px var(--live); }
+
+  @media (prefers-reduced-motion: reduce){ .track{ transition:none !important; } .dot{ animation:none !important; } }
+</style>
+</head>
+<body>
+  <div id="stage">
+    <header>
+      <div class="brand">
+        <div class="mark">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#28E0C6" stroke-width="1.8"
+               stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 12h4l2-7 4 14 2-7h6"/>
+          </svg>
+        </div>
+        <div>
+          <h1 id="board-title">Threat Landscape</h1>
+          <div class="sub" id="board-sub">Situational Awareness</div>
+        </div>
+      </div>
+      <div class="status-cluster">
+        <div class="live-pill live" id="status"><span class="dot"></span><span class="live-label" style="letter-spacing:.22em"></span></div>
+        <div class="clocks">
+          <div class="clock"><div class="t" id="clock-utc">--:--:--</div><div class="l">UTC</div></div>
+          <div class="clock"><div class="t" id="clock-local">--:--:--</div><div class="l" id="local-label">LOCAL</div></div>
+        </div>
+      </div>
+    </header>
+
+    <!-- HERO: threat posture -->
+    <section class="posture" id="posture">
+      <div class="headline">
+        <div class="eyebrow">Threat Posture</div>
+        <div class="level" id="lvl-word">ELEVATED</div>
+        <div class="directive" id="lvl-directive"></div>
+      </div>
+      <div class="right">
+        <div>
+          <div class="meter" id="meter">
+            <div class="seg" data-lvl="guarded"></div>
+            <div class="seg" data-lvl="elevated"></div>
+            <div class="seg" data-lvl="high"></div>
+            <div class="seg" data-lvl="severe"></div>
+          </div>
+          <div class="meter-row">
+            <div class="seg-label">Guarded</div><div class="seg-label">Elevated</div>
+            <div class="seg-label">High</div><div class="seg-label">Severe</div>
+          </div>
+        </div>
+        <div class="chips">
+          <div class="chip"><div class="v" id="c-victims">—</div><div class="k">Victims · 7d</div></div>
+          <div class="chip"><div class="v" id="c-group">—</div><div class="k">Most active group</div></div>
+          <div class="chip"><div class="v" id="c-sector">—</div><div class="k">Top sector</div></div>
+          <div class="chip"><div class="v" id="c-country">—</div><div class="k">Top region</div></div>
+        </div>
+      </div>
+    </section>
+
+    <div class="board">
+      <div class="col">
+        <section class="panel" style="min-height:0;">
+          <div class="head">
+            <h2><span class="tick"></span>Ransomware Activity</h2>
+            <span class="meta" id="rw-meta">Recent public disclosures</span>
+          </div>
+          <div class="scroll"><div class="track" id="rw-list"></div></div>
+        </section>
+      </div>
+
+      <div class="col right">
+        <section class="panel">
+          <div class="head">
+            <h2><span class="tick"></span>ATT&amp;CK Spotlight</h2>
+            <span class="meta">MITRE technique</span>
+          </div>
+          <div class="spot" id="spot"></div>
+        </section>
+
+        <section class="panel">
+          <div class="head">
+            <h2><span class="tick"></span>Campaign Watchlist</h2>
+            <span class="meta">Curated by SOC</span>
+          </div>
+          <div class="scroll"><div class="track" id="wl-list"></div></div>
+        </section>
+      </div>
+    </div>
+
+    <footer>
+      <div id="source-line"><b>Sources:</b></div>
+      <div style="display:flex; align-items:center; gap:16px;">
+        <span id="updated">Updated —</span>
+        <div class="refresh-bar"><i id="refresh-fill"></i></div>
+      </div>
+    </footer>
+  </div>
+
+<script>
+/* ===========================================================================
+   CONFIG  —  edit this block
+   =========================================================================== */
+const CONFIG = {
+  title:    "Threat Landscape",
+  subtitle: "Situational Awareness",
+  refreshMinutes: 15,
+
+  // The ransomware.live API doesn't send CORS headers, so a browser can't call
+  // it directly. The board tries a direct fetch first, then falls back through
+  // these proxies IN ORDER until one returns data. Public proxies are best-effort
+  // and go up and down — for a reliable SOC wall, host your own (a ~12-line
+  // Cloudflare Worker is enough) and put it FIRST in this list. Format: a prefix
+  // that accepts the URL-encoded target, e.g. "https://proxy.internal/?url=".
+  proxies: [
+    "https://corsproxy.io/?url=",
+    "https://api.allorigins.win/raw?url=",
+    "https://api.codetabs.com/v1/proxy/?quest=",
+    "https://thingproxy.freeboard.io/fetch/"
+  ],
+
+  // THREAT POSTURE ----------------------------------------------------------
+  // Set the level your SOC lead declares. One of: guarded | elevated | high | severe
+  // Or set "auto" to derive from ransomware victim volume (rough — tune thresholds).
+  posture: "elevated",
+  postureAuto: { guarded: 0, elevated: 60, high: 110, severe: 170 }, // victims/7d lower bounds
+  directives: {
+    guarded:  "Baseline monitoring. No elevated activity against our sectors right now.",
+    elevated: "Heightened activity in the wild. Verify patch levels and watch the listed TTPs.",
+    high:     "Active exploitation affecting our sectors. Prioritise patching and threat hunting.",
+    severe:   "Widespread active exploitation. Execute incident-readiness plan; hunt for listed TTPs."
+  },
+
+  // RANSOMWARE FEED ---------------------------------------------------------
+  ransomware: {
+    enabled: true,
+    // Recent ransomware disclosures. Endpoint & fields confirmed against
+    // ransomware.live/apidocs (v2). No API key needed for personal use; the
+    // apiKey below is only for the paid api-pro.ransomware.live tier.
+    endpoint: "https://api.ransomware.live/v2/recentvictims",
+    // BEST OPTION for a SOC: a same-origin JSON file refreshed by a scheduled
+    // GitHub Action (see the workflow provided). No CORS, no proxy, works even
+    // if the player's network blocks external sites. Set to "" to use the live
+    // API directly instead. Path is relative to this HTML file.
+    localFile: "data/ransomware.json",
+    apiKey: "",              // leave blank for the free public API
+    showVictimNames: true,   // false -> show sector/region only, hide org names
+    max: 26
+  },
+
+  // CAMPAIGN WATCHLIST ------------------------------------------------------
+  // Curate these with your own current tracking. level: hot | warm | watch | info
+  watchlist: [
+    { name:"Credential phishing wave — finance sector", desc:"MFA-fatigue + AiTM proxy kits; watch impossible-travel sign-ins.", level:"hot",   badge:"Active" },
+    { name:"Edge-device exploitation", desc:"Mass scanning of exposed VPN / firewall management interfaces.", level:"warm", badge:"Rising" },
+    { name:"Supply-chain package typosquatting", desc:"Malicious npm/PyPI lookalikes targeting build pipelines.", level:"watch", badge:"Monitor" },
+    { name:"Business email compromise", desc:"Invoice-redirect fraud against AP teams; verify bank-detail changes.", level:"warm", badge:"Rising" },
+    { name:"Infostealer log resale", desc:"Corporate creds surfacing on markets; rotate exposed sessions.", level:"watch", badge:"Monitor" }
+  ],
+
+  spotlightRotateSeconds: 22
+};
+
+/* ===========================================================================
+   MITRE ATT&CK spotlight cards (curated; edit freely)
+   =========================================================================== */
+const ATTACK = [
+  { id:"T1566", name:"Phishing", tactic:"Initial Access",
+    desc:"Adversaries send deceptive messages with malicious links or attachments to gain a foothold.",
+    tip:"Alert on newly-registered lookalike domains and flag external mail with attachments to finance/HR." },
+  { id:"T1190", name:"Exploit Public-Facing Application", tactic:"Initial Access",
+    desc:"Weaknesses in internet-facing systems are abused to run code or gain access.",
+    tip:"Cross-reference exposed assets against the KEV catalog daily; virtual-patch what you can't patch fast." },
+  { id:"T1078", name:"Valid Accounts", tactic:"Defense Evasion / Persistence",
+    desc:"Legitimate credentials are used to blend in with normal activity and evade detection.",
+    tip:"Hunt impossible-travel logins, new MFA device enrolments, and dormant accounts waking up." },
+  { id:"T1059", name:"Command & Scripting Interpreter", tactic:"Execution",
+    desc:"PowerShell, cmd, bash and similar interpreters are used to run adversary code.",
+    tip:"Enable script-block logging; alert on encoded PowerShell and unusual parent-child process chains." },
+  { id:"T1486", name:"Data Encrypted for Impact", tactic:"Impact",
+    desc:"Files are encrypted to disrupt operations and extort the victim — the ransomware payload stage.",
+    tip:"Watch for mass file renames, shadow-copy deletion, and spikes in file-write entropy." },
+  { id:"T1021", name:"Remote Services", tactic:"Lateral Movement",
+    desc:"RDP, SMB, SSH and admin shares are used to move between hosts once inside.",
+    tip:"Baseline normal admin paths; alert on new host-to-host RDP and service creation over the network." },
+  { id:"T1567", name:"Exfiltration Over Web Service", tactic:"Exfiltration",
+    desc:"Data is smuggled out through trusted cloud services to hide among normal traffic.",
+    tip:"Monitor large uploads to file-sharing and paste sites; flag rare destinations for sensitive hosts." },
+  { id:"T1053", name:"Scheduled Task / Job", tactic:"Persistence",
+    desc:"Tasks and cron jobs are created to re-run payloads and survive reboots.",
+    tip:"Alert on new scheduled tasks writing to temp paths or invoking script interpreters." }
+];
+
+/* ===========================================================================
+   Stage fit
+   =========================================================================== */
+const stage = document.getElementById('stage');
+function fitStage(){
+  const s = Math.min(window.innerWidth/1920, window.innerHeight/1080);
+  stage.style.transform = `scale(${s})`;
+  stage.style.left = ((window.innerWidth - 1920*s)/2) + 'px';
+  stage.style.top  = ((window.innerHeight - 1080*s)/2) + 'px';
+}
+window.addEventListener('resize', fitStage);
+
+/* ===========================================================================
+   Helpers
+   =========================================================================== */
+const $ = id => document.getElementById(id);
+const esc = s => (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function relTime(d){ if(!d) return '';
+  const s=Math.max(1,(Date.now()-d.getTime())/1000);
+  if(s<3600) return Math.floor(s/60)+'m ago';
+  if(s<86400) return Math.floor(s/3600)+'h ago';
+  return Math.floor(s/86400)+'d ago'; }
+function mode(arr){ const m={}; let best=null,bc=0;
+  arr.filter(Boolean).forEach(v=>{ m[v]=(m[v]||0)+1; if(m[v]>bc){bc=m[v];best=v;} }); return best; }
+
+async function grab(url,{json=false}={}){
+  const key = CONFIG.ransomware.apiKey;
+  // Build the ordered list of attempts: direct first, then each proxy.
+  const attempts = [
+    { label:'direct', build:()=>url, headers: key ? {'X-API-KEY':key} : {} },
+    ...CONFIG.proxies.map(p => ({ label:p, build:()=>p+encodeURIComponent(url), headers:{} }))
+  ];
+  let lastErr;
+  for(const a of attempts){
+    try{
+      const r = await fetch(a.build(), { cache:'no-store', headers:a.headers });
+      if(!r.ok){ lastErr = new Error(a.label+' HTTP '+r.status); continue; }
+      const text = await r.text();
+      if(!text || text.trim()[0] === '<'){ lastErr = new Error(a.label+' returned non-JSON'); continue; }
+      return json ? JSON.parse(text) : text;
+    }catch(e){ lastErr = new Error(a.label+' '+e.message); }
+  }
+  console.warn('[wallboard] all fetch attempts failed for', url, '-', lastErr && lastErr.message);
+  throw lastErr || new Error('all attempts failed');
+}
+
+/* ===========================================================================
+   Ransomware feed
+   =========================================================================== */
+function normVictim(v){
+  // Confirmed ransomware.live v2 fields first, with fallbacks for safety.
+  const group   = v.group || v.group_name || v.gang || v.actor || '';
+  const victim  = v.victim || v.post_title || v.title || v.name || v.company || '';
+  const country = v.country || v.geo || v.region || '';
+  const sector  = v.activity || v.sector || v.industry || v.category || '';
+  const ds = v.attackdate || v.discovered || v.published || v.date || v.created || v.publish_date;
+  let date = ds ? new Date(ds) : null; if(date && isNaN(date)) date=null;
+  return { group, victim, country, sector, date };
+}
+function parseVictims(data){
+  let list = Array.isArray(data) ? data : (data.items || data.victims || data.data || data.results || []);
+  let items = list.map(normVictim).filter(x=>x.group || x.victim);
+  items.sort((a,b)=>(b.date?.getTime()||0)-(a.date?.getTime()||0));
+  return items.slice(0, CONFIG.ransomware.max);
+}
+async function fetchRansomware(){
+  if(!CONFIG.ransomware.enabled) return null;
+  // Preferred: a same-origin JSON refreshed by a scheduled job — no CORS, no
+  // proxy, reachable even on a locked-down network.
+  if(CONFIG.ransomware.localFile){
+    try{
+      const r = await fetch(CONFIG.ransomware.localFile, { cache:'no-store' });
+      if(r.ok) return parseVictims(await r.json());
+      console.warn('[wallboard] local file HTTP '+r.status+', trying live API');
+    }catch(e){ console.warn('[wallboard] local file failed, trying live API -', e.message); }
+  }
+  // Fallback: live API via the direct/proxy cascade.
+  return parseVictims(await grab(CONFIG.ransomware.endpoint, { json:true }));
+}
+
+/* ===========================================================================
+   Render
+   =========================================================================== */
+function renderRansomware(items){
+  $('rw-list').innerHTML = items.map(v=>{
+    const victim = CONFIG.ransomware.showVictimNames && v.victim
+      ? esc(v.victim) : (esc(v.sector) || 'Undisclosed target');
+    const tags = [v.group?('<span class="group">'+esc(v.group)+'</span>'):'',
+                  v.sector?('<span class="tag">'+esc(v.sector)+'</span>'):'',
+                  v.country?('<span class="tag">'+esc(v.country)+'</span>'):''].join('');
+    return `<div class="rw">
+      <div class="victim">${victim}</div>
+      <div class="tags">${tags}</div>
+      <div class="when">${v.date?relTime(v.date):''}</div>
+    </div>`;
+  }).join('');
+}
+function renderWatchlist(){
+  $('wl-list').innerHTML = CONFIG.watchlist.map(w=>`
+    <div class="wl ${esc(w.level||'watch')}">
+      <div class="rail"></div>
+      <div><div class="name">${esc(w.name)}</div><div class="desc">${esc(w.desc||'')}</div></div>
+      <div class="badge">${esc(w.badge||'')}</div>
+    </div>`).join('');
+}
+
+/* posture */
+const LEVELS = ['guarded','elevated','high','severe'];
+function applyPosture(level, victims7d){
+  let lvl = level;
+  if(level === 'auto'){
+    const t = CONFIG.postureAuto; lvl='guarded';
+    if(victims7d>=t.severe) lvl='severe';
+    else if(victims7d>=t.high) lvl='high';
+    else if(victims7d>=t.elevated) lvl='elevated';
+  }
+  const color = getComputedStyle(document.documentElement).getPropertyValue('--'+lvl).trim();
+  $('posture').style.setProperty('--lvl-color', color);
+  $('lvl-word').textContent = lvl.toUpperCase();
+  $('lvl-directive').textContent = CONFIG.directives[lvl] || '';
+  const idx = LEVELS.indexOf(lvl);
+  [...document.querySelectorAll('#meter .seg')].forEach((seg,i)=>{
+    seg.className = 'seg' + (i<=idx ? ' on-'+LEVELS[i] : '');
+  });
+}
+
+/* spotlight rotation */
+let spotIdx = 0;
+function renderSpotlight(){
+  const t = ATTACK[spotIdx % ATTACK.length];
+  $('spot').innerHTML = `
+    <div class="row1"><div class="tid">${esc(t.id)}</div><div class="tname">${esc(t.name)}</div></div>
+    <div class="tactic">${esc(t.tactic)}</div>
+    <div class="tdesc">${esc(t.desc)}</div>
+    <div class="tip"><b>Detection focus</b>${esc(t.tip)}</div>
+    <div class="dots">${ATTACK.map((_,i)=>`<i class="${i===spotIdx%ATTACK.length?'on':''}"></i>`).join('')}</div>`;
+}
+
+function setStatus(s){ const el=$('status'); el.classList.remove('live','demo','stale'); el.classList.add(s); }
+
+/* ===========================================================================
+   Scroller (shared with board 1)
+   =========================================================================== */
+function makeScroller(id){
+  const track=$(id), view=track.parentElement;
+  let raf,phase,t0,overflow; const PACE=26,PAUSE=4200;
+  function reset(){ cancelAnimationFrame(raf); track.style.transform='translateY(0)';
+    overflow=track.scrollHeight-view.clientHeight; if(overflow<=4) return;
+    phase='top'; t0=performance.now(); raf=requestAnimationFrame(step); }
+  function step(now){ const dt=now-t0;
+    if(phase==='top'){ if(dt>PAUSE){phase='down';t0=now;} }
+    else if(phase==='down'){ const y=Math.min(overflow,dt/1000*PACE); track.style.transform=`translateY(${-y}px)`; if(y>=overflow){phase='bot';t0=now;} }
+    else if(phase==='bot'){ if(dt>PAUSE){phase='up';t0=now;} }
+    else if(phase==='up'){ const y=Math.max(0,overflow-dt/1000*PACE*1.8); track.style.transform=`translateY(${-y}px)`; if(y<=0){phase='top';t0=now;} }
+    raf=requestAnimationFrame(step); }
+  return reset;
+}
+let rescrollRW, rescrollWL;
+
+/* ===========================================================================
+   Refresh
+   =========================================================================== */
+let lastRW=null;
+async function refresh(){
+  let live=false;
+  try{
+    const items = await fetchRansomware();
+    if(items && items.length){
+      lastRW=items; renderRansomware(items); rescrollRW(); live=true;
+      const wk = items.filter(v=>v.date && (Date.now()-v.date.getTime())<7*864e5);
+      $('c-victims').textContent = wk.length || items.length;
+      $('c-group').textContent   = mode(items.map(v=>v.group)) || '—';
+      $('c-sector').textContent  = mode(items.map(v=>v.sector)) || '—';
+      $('c-country').textContent = mode(items.map(v=>v.country)) || '—';
+      applyPosture(CONFIG.posture, wk.length || items.length);
+    }
+  }catch(e){ /* keep seed */ }
+
+  if(live) setStatus('live');
+  else if(lastRW) setStatus('stale');
+  else setStatus('demo');
+
+  $('updated').textContent = 'Updated ' + new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+}
+
+/* ===========================================================================
+   Clocks + bars
+   =========================================================================== */
+function tickClocks(){ const n=new Date();
+  $('clock-utc').textContent=n.toISOString().slice(11,19);
+  $('clock-local').textContent=n.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'}); }
+$('local-label').textContent=(Intl.DateTimeFormat().resolvedOptions().timeZone||'LOCAL').split('/').pop().replace('_',' ').toUpperCase();
+let cycleStart=Date.now();
+function tickBar(){ const span=CONFIG.refreshMinutes*60000;
+  $('refresh-fill').style.width=Math.min(100,(Date.now()-cycleStart)/span*100)+'%'; }
+
+/* ===========================================================================
+   Seed data (clearly illustrative; DEMO badge until live feed loads)
+   =========================================================================== */
+const SEED_RW = [
+  { group:"Group Alpha", victim:"Manufacturing firm — seed data (live feed loading)", sector:"Manufacturing", country:"DE", date:new Date(Date.now()-5*36e5) },
+  { group:"Group Bravo", victim:"Regional healthcare provider — seed data", sector:"Healthcare", country:"US", date:new Date(Date.now()-9*36e5) },
+  { group:"Group Charlie", victim:"Logistics company — seed data", sector:"Transportation", country:"FR", date:new Date(Date.now()-15*36e5) },
+  { group:"Group Alpha", victim:"Professional services firm — seed data", sector:"Services", country:"UK", date:new Date(Date.now()-22*36e5) },
+  { group:"Group Delta", victim:"Municipal government — seed data", sector:"Public Sector", country:"NL", date:new Date(Date.now()-30*36e5) },
+  { group:"Group Bravo", victim:"Software vendor — seed data", sector:"Technology", country:"US", date:new Date(Date.now()-40*36e5) },
+];
+
+/* ===========================================================================
+   Boot
+   =========================================================================== */
+function boot(){
+  $('board-title').textContent=CONFIG.title;
+  $('board-sub').textContent=CONFIG.subtitle;
+  $('source-line').innerHTML='<b>Sources:</b> ransomware.live · MITRE ATT&CK · SOC watchlist';
+
+  fitStage();
+  tickClocks(); setInterval(tickClocks,1000);
+  setInterval(tickBar,1000);
+
+  renderWatchlist();
+  renderSpotlight();
+  setInterval(()=>{ spotIdx=(spotIdx+1)%ATTACK.length; renderSpotlight(); }, CONFIG.spotlightRotateSeconds*1000);
+
+  rescrollRW=makeScroller('rw-list'); rescrollWL=makeScroller('wl-list');
+
+  // seed immediately
+  renderRansomware(SEED_RW); rescrollRW(); rescrollWL();
+  $('c-victims').textContent=SEED_RW.length; $('c-group').textContent='Group Alpha';
+  $('c-sector').textContent='Manufacturing'; $('c-country').textContent='US';
+  applyPosture(CONFIG.posture, SEED_RW.length);
+  setStatus('demo');
+
+  const loop=async()=>{ cycleStart=Date.now(); await refresh(); };
+  loop(); setInterval(loop, CONFIG.refreshMinutes*60000);
+}
+boot();
+</script>
+</body>
+</html>
