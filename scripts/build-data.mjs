@@ -11,7 +11,7 @@ import { XMLParser } from "fast-xml-parser";
 
 const cfg = JSON.parse(await readFile(new URL("../sources.json", import.meta.url)));
 const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "@_" });
-const UA = { "User-Agent": "soc-wallboard-backend (+github-actions)" };
+const UA = { "User-Agent": "Mozilla/5.0 (compatible; soc-wallboard/1.0)" };
 const nowISO = () => new Date().toISOString();
 
 async function getText(url, headers = {}) {
