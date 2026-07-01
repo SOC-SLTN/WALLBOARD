@@ -11,7 +11,7 @@ import { XMLParser } from "fast-xml-parser";
 
 const cfg = JSON.parse(await readFile(new URL("../sources.json", import.meta.url)));
 const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "@_" });
-const UA = { "User-Agent": "Mozilla/5.0 (compatible; soc-wallboard/1.0)" };
+const UA = { "User-Agent": "soc-wallboard-backend (+github-actions)" };
 const nowISO = () => new Date().toISOString();
 
 async function getText(url, headers = {}) {
@@ -21,6 +21,45 @@ async function getText(url, headers = {}) {
 }
 const getJSON = async (url, headers = {}) => JSON.parse(await getText(url, headers));
 const asArray = (x) => (Array.isArray(x) ? x : x == null ? [] : [x]);
+
+/* ---------- CSAF advisories (e.g. NCSC-NL) ------------------------------ */
+// Reads a CSAF directory-based changes.csv (newest-first list of advisory
+// files), fetches the top N advisory JSONs, and extracts a headline for each.
+async function buildCsafSource(src) {
+  const csv = await getText(src.changes);
+  const base = src.base.endsWith("/") ? src.base : src.base + "/";
+  const rows = csv.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).map((line) => {
+    const i = line.indexOf(",");
+    if (i < 0) return null;
+    const path = line.slice(0, i).replace(/^"|"$/g, "").replace(/^\.?\//, "").trim();
+    const date = line.slice(i + 1).replace(/^"|"$/g, "").trim();
+    return { path, date };
+  }).filter(Boolean);
+  rows.sort((a, b) => (Date.parse(b.date) || 0) - (Date.parse(a.date) || 0));
+
+  const abbr = (s) => (s ? s[0].toUpperCase() : "");
+  const items = [];
+  for (const r of rows.slice(0, src.max ?? 20)) {
+    try {
+      const d = (await getJSON(base + r.path)).document || {};
+      const id = d.tracking?.id || "";
+      const notes = d.notes || [];
+      const kans = notes.find((n) => n.title === "Kans")?.text;      // likelihood
+      const schade = notes.find((n) => n.title === "Schade")?.text;  // impact
+      const rating = kans && schade ? `[${abbr(kans)}/${abbr(schade)}] ` : "";
+      const rel = d.tracking?.current_release_date || r.date;
+      const d2 = rel ? new Date(rel) : null;
+      items.push({
+        source: src.name,
+        title: `${id ? id + " " : ""}${rating}${d.title || ""}`.trim(),
+        link: base + r.path,
+        date: d2 && !isNaN(d2) ? d2.toISOString() : null,
+      });
+    } catch { /* skip a single bad advisory, keep going */ }
+  }
+  console.log(`news(csaf): ${src.name} -> ${items.length}`);
+  return items;
+}
 
 /* ---------- NEWS (RSS / Atom) ------------------------------------------- */
 async function buildNews() {
@@ -44,6 +83,16 @@ async function buildNews() {
     } catch (e) {
       health.push({ name: f.name, ok: false, error: String(e.message || e) });
       console.error(`news: ${f.name} FAILED -> ${e.message || e}`);
+    }
+  }
+  for (const src of cfg.news?.csaf ?? []) {
+    try {
+      const csafItems = await buildCsafSource(src);
+      items.push(...csafItems);
+      health.push({ name: src.name, ok: csafItems.length > 0, count: csafItems.length });
+    } catch (e) {
+      health.push({ name: src.name, ok: false, error: String(e.message || e) });
+      console.error(`news(csaf): ${src.name} FAILED -> ${e.message || e}`);
     }
   }
   items.sort((a, b) => (Date.parse(b.date) || 0) - (Date.parse(a.date) || 0));
