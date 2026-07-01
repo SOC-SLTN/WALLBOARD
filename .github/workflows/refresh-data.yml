@@ -1,0 +1,53 @@
+# .github/workflows/refresh-data.yml
+#
+# The scheduled "backend" for both wallboards. Runs scripts/build-data.mjs on
+# GitHub's servers (open internet, no CORS, no office firewall), then commits
+# the refreshed data/*.json so GitHub Pages serves them same-origin to the boards.
+#
+# This REPLACES the earlier refresh-threat-data.yml — delete that one so they
+# don't both run.
+
+name: Refresh wallboard data
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"    # every 30 min (UTC); GitHub may delay under load
+  workflow_dispatch:           # manual "Run workflow" button
+  push:
+    paths:
+      - "sources.json"         # rebuild immediately when you add/change sources
+
+permissions:
+  contents: write
+
+concurrency:
+  group: wallboard-data
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Build data
+        run: node scripts/build-data.mjs
+
+      - name: Commit refreshed data
+        run: |
+          git config user.name  "wallboard-data-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/*.json
+          if git diff --cached --quiet; then
+            echo "No data changes."
+          else
+            git commit -m "chore: refresh wallboard data"
+            git push
+          fi
