@@ -24,7 +24,16 @@ const asArray = (x) => (Array.isArray(x) ? x : x == null ? [] : [x]);
 
 /* ---------- CSAF advisories (e.g. NCSC-NL) ------------------------------ */
 // Reads a CSAF directory-based changes.csv (newest-first list of advisory
-// files), fetches the top N advisory JSONs, and extracts a headline for each.
+// files), fetches the top N advisory JSONs, and returns rich items. Used by
+// buildVulns() — NCSC advisories are vulnerability advisories, not news.
+function ncscBand(kans, schade) {
+  const k = (kans || "").toLowerCase(), s = (schade || "").toLowerCase();
+  if (k === "high" && s === "high") return "crit";
+  if (s === "high") return "high";
+  if (s === "medium") return "med";
+  if (s === "low") return "low";
+  return "none";
+}
 async function buildCsafSource(src) {
   const csv = await getText(src.changes);
   const base = src.base.endsWith("/") ? src.base : src.base + "/";
@@ -42,22 +51,22 @@ async function buildCsafSource(src) {
   for (const r of rows.slice(0, src.max ?? 20)) {
     try {
       const d = (await getJSON(base + r.path)).document || {};
-      const id = d.tracking?.id || "";
       const notes = d.notes || [];
       const kans = notes.find((n) => n.title === "Kans")?.text;      // likelihood
       const schade = notes.find((n) => n.title === "Schade")?.text;  // impact
-      const rating = kans && schade ? `[${abbr(kans)}/${abbr(schade)}] ` : "";
       const rel = d.tracking?.current_release_date || r.date;
-      const d2 = rel ? new Date(rel) : null;
+      const dt = rel ? new Date(rel) : null;
       items.push({
-        source: src.name,
-        title: `${id ? id + " " : ""}${rating}${d.title || ""}`.trim(),
+        id: d.tracking?.id || r.path,
+        title: d.title || "",
+        date: dt && !isNaN(dt) ? dt.toISOString() : null,
         link: base + r.path,
-        date: d2 && !isNaN(d2) ? d2.toISOString() : null,
+        rating: kans && schade ? `${abbr(kans)}/${abbr(schade)}` : "",
+        band: ncscBand(kans, schade),
       });
     } catch { /* skip a single bad advisory, keep going */ }
   }
-  console.log(`news(csaf): ${src.name} -> ${items.length}`);
+  console.log(`csaf: ${src.name} -> ${items.length}`);
   return items;
 }
 
@@ -86,13 +95,13 @@ async function buildNews() {
     }
   }
   for (const src of cfg.news?.csaf ?? []) {
+    // (kept for flexibility; normally NCSC CSAF is configured under vulns, not news)
     try {
-      const csafItems = await buildCsafSource(src);
-      items.push(...csafItems);
-      health.push({ name: src.name, ok: csafItems.length > 0, count: csafItems.length });
+      const adv = await buildCsafSource(src);
+      items.push(...adv.map((a) => ({ source: src.name, title: a.title, link: a.link, date: a.date })));
+      health.push({ name: src.name, ok: adv.length > 0, count: adv.length });
     } catch (e) {
       health.push({ name: src.name, ok: false, error: String(e.message || e) });
-      console.error(`news(csaf): ${src.name} FAILED -> ${e.message || e}`);
     }
   }
   items.sort((a, b) => (Date.parse(b.date) || 0) - (Date.parse(a.date) || 0));
@@ -150,6 +159,21 @@ async function buildVulns() {
     } catch (e) {
       health.push({ name: "NVD", ok: false, error: String(e.message || e) });
       console.error(`vulns: NVD FAILED -> ${e.message || e}`);
+    }
+  }
+
+  // CSAF advisories (e.g. NCSC-NL) — national advisories alongside CVEs.
+  for (const src of cfg.vulns?.csaf ?? []) {
+    try {
+      const adv = await buildCsafSource(src);
+      for (const a of adv) out.push({
+        id: a.id, product: a.title, desc: "", date: a.date,
+        score: null, kev: false, ncsc: true, rating: a.rating, band: a.band,
+      });
+      health.push({ name: src.name, ok: adv.length > 0, count: adv.length });
+    } catch (e) {
+      health.push({ name: src.name, ok: false, error: String(e.message || e) });
+      console.error(`vulns(csaf): ${src.name} FAILED -> ${e.message || e}`);
     }
   }
 
