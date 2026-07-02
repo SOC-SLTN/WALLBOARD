@@ -9,19 +9,11 @@
       { "name": "Krebs on Security", "url": "https://krebsonsecurity.com/feed/" },
       { "name": "SANS ISC",          "url": "https://isc.sans.edu/rssfeed.xml" },
       { "name": "CISA Advisories",   "url": "https://www.cisa.gov/cybersecurity-advisories/all.xml" }
-    ],
-    "csaf": [
-      {
-        "name": "NCSC-NL Advisories",
-        "changes": "https://advisories.ncsc.nl/csaf/v2/changes.csv",
-        "base": "https://advisories.ncsc.nl/csaf/v2/",
-        "max": 20
-      }
     ]
   },
 
   "vulns": {
-    "max": 30,
+    "max": 40,
     "kev": {
       "enabled": true,
       "url": "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
@@ -32,7 +24,15 @@
       "severity": "CRITICAL",
       "lookbackDays": 3,
       "apiKey": ""
-    }
+    },
+    "csaf": [
+      {
+        "name": "NCSC-NL Advisories",
+        "changes": "https://advisories.ncsc.nl/csaf/v2/changes.csv",
+        "base": "https://advisories.ncsc.nl/csaf/v2/",
+        "max": 20
+      }
+    ]
   },
 
   "ransomware": {
