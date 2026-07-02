@@ -168,7 +168,7 @@
   .stat.feed .edge{ background:var(--low); }
 
   /* ---- Panels --------------------------------------------------------- */
-  .board{ display:grid; grid-template-columns:1.32fr 1fr; gap:20px; min-height:0; z-index:2; }
+  .board{ display:grid; grid-template-columns:1fr 1.32fr; gap:20px; min-height:0; z-index:2; }
   .panel{
     background:linear-gradient(180deg,#101827, #0d1423);
     border:1px solid var(--line); border-radius:18px;
@@ -301,18 +301,18 @@
     <div class="board">
       <section class="panel">
         <div class="head">
-          <h2><span class="tick"></span>Recent Vulnerabilities</h2>
-          <span class="meta" id="vuln-meta">KEV catalog + critical CVEs</span>
+          <h2><span class="tick"></span>Security News</h2>
+          <span class="meta" id="news-meta">International feeds</span>
         </div>
-        <div class="scroll"><div class="track" id="vuln-list"></div></div>
+        <div class="scroll"><div class="track" id="news-list"></div></div>
       </section>
 
       <section class="panel">
         <div class="head">
-          <h2><span class="tick"></span>Security News</h2>
-          <span class="meta" id="news-meta">Aggregated feeds</span>
+          <h2><span class="tick"></span>Recent Vulnerabilities</h2>
+          <span class="meta" id="vuln-meta">NCSC advisories · KEV · critical CVEs</span>
         </div>
-        <div class="scroll"><div class="track" id="news-list"></div></div>
+        <div class="scroll"><div class="track" id="vuln-list"></div></div>
       </section>
     </div>
 
@@ -517,14 +517,20 @@ async function fetchVulns(){
    =========================================================================== */
 function renderVulns(items){
   $('vuln-list').innerHTML = items.map(v => {
-    const b = band(v.score);
-    const score = v.score != null ? Number(v.score).toFixed(1) : (v.kev ? 'KEV' : '—');
+    const b = v.band || band(v.score);
+    const score = v.score != null ? Number(v.score).toFixed(1)
+                : v.kev ? 'KEV'
+                : v.rating ? v.rating
+                : '—';
     const product = v.product?.trim() || v.desc || 'Details pending';
+    const tag = v.kev ? '<span class="kevtag">EXPLOITED</span>'
+              : v.ncsc ? '<span class="kevtag">NCSC</span>'
+              : '';
     return `<div class="vuln ${b}">
       <div class="rail"></div>
       <div class="id">${esc(v.id)}</div>
       <div class="meta">
-        <div class="prod">${v.kev?'<span class="kevtag">EXPLOITED</span>':''}${esc(product)}</div>
+        <div class="prod">${tag}${esc(product)}</div>
         <div class="desc">${esc(v.desc||'')}</div>
       </div>
       <div class="right">
